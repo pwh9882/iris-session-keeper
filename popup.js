@@ -6,12 +6,14 @@ const $status = document.getElementById('status');
 const $remaining = document.getElementById('remaining');
 const $lastRun = document.getElementById('last-run');
 const $nextRun = document.getElementById('next-run');
+const $refreshCount = document.getElementById('refresh-count');
 const $toggle = document.getElementById('toggle');
 const $refreshNow = document.getElementById('refresh-now');
 const $permBox = document.getElementById('perm-box');
 const $grant = document.getElementById('grant');
 
 let session = null;
+let nextAt = null; // 다음 자동갱신 시각 (비활성화 상태면 null)
 
 function formatTime(ts) {
   return new Date(ts).toLocaleTimeString('ko-KR', {
@@ -21,29 +23,55 @@ function formatTime(ts) {
   });
 }
 
-function tickRemaining() {
+function formatSeconds(totalSec) {
+  const m = Math.floor(totalSec / 60);
+  const s = String(totalSec % 60).padStart(2, '0');
+  return `${m}분 ${s}초`;
+}
+
+// 초 단위 계산을 벽시계 초 경계에 맞춰서 두 카운트다운이 같은 순간에 줄어들게 함
+function secondsUntil(deadline, now) {
+  return Math.floor(deadline / 1000) - Math.floor(now / 1000);
+}
+
+function tickRemaining(now) {
   if (!session) {
     $remaining.textContent = '-';
     $remaining.className = 'value';
     return;
   }
-  const ms = session.duration - (Date.now() - session.startTime);
-  if (ms <= 0) {
+  const sec = secondsUntil(session.startTime + session.duration, now);
+  if (sec <= 0) {
     $remaining.textContent = '만료됨';
     $remaining.className = 'value err';
     return;
   }
-  const totalSec = Math.floor(ms / 1000);
-  const m = Math.floor(totalSec / 60);
-  const s = String(totalSec % 60).padStart(2, '0');
-  $remaining.textContent = `${m}분 ${s}초`;
-  $remaining.className = `value ${ms < 5 * 60_000 ? 'warn' : 'ok'}`;
+  $remaining.textContent = formatSeconds(sec);
+  $remaining.className = `value ${sec < 5 * 60 ? 'warn' : 'ok'}`;
+}
+
+function tickNextRun(now) {
+  if (!nextAt) {
+    $nextRun.textContent = '-';
+    $nextRun.title = '';
+    return;
+  }
+  const sec = secondsUntil(nextAt, now);
+  $nextRun.textContent = sec <= 0 ? '곧 실행' : `${formatSeconds(sec)} 후`;
+  $nextRun.title = formatTime(nextAt);
+}
+
+function tick() {
+  const now = Date.now();
+  tickRemaining(now);
+  tickNextRun(now);
 }
 
 async function render() {
-  const stored = await api.storage.local.get(['enabled', 'nextAt', 'lastRun', 'session']);
-  const { enabled = true, nextAt = null, lastRun = null } = stored;
+  const stored = await api.storage.local.get(['enabled', 'nextAt', 'lastRun', 'session', 'refreshCount']);
+  const { enabled = true, lastRun = null, refreshCount = 0 } = stored;
   session = stored.session ?? null;
+  nextAt = enabled ? stored.nextAt ?? null : null;
 
   $status.textContent = enabled ? '동작 중' : '중지됨';
   $status.className = `value ${enabled ? 'ok' : 'err'}`;
@@ -52,19 +80,27 @@ async function render() {
   $toggle.className = enabled ? 'on' : 'off';
 
   if (lastRun) {
-    $lastRun.textContent = lastRun.ok
-      ? formatTime(lastRun.at)
-      : `실패 (${formatTime(lastRun.at)})`;
-    $lastRun.className = `value ${lastRun.ok ? 'ok' : 'err'}`;
-    $lastRun.title = lastRun.detail ?? lastRun.error ?? '';
+    if (lastRun.ok) {
+      $lastRun.textContent = formatTime(lastRun.at);
+      $lastRun.className = 'value ok';
+      $lastRun.title = lastRun.detail ?? '';
+    } else if (lastRun.offline) {
+      $lastRun.textContent = `오프라인 (${formatTime(lastRun.at)})`;
+      $lastRun.className = 'value warn';
+      $lastRun.title = '네트워크 연결이 복구되면 자동으로 다시 시도합니다';
+    } else {
+      $lastRun.textContent = `실패 (${formatTime(lastRun.at)})`;
+      $lastRun.className = 'value err';
+      $lastRun.title = lastRun.error ?? '';
+    }
   } else {
     $lastRun.textContent = '-';
     $lastRun.className = 'value';
     $lastRun.title = '';
   }
 
-  $nextRun.textContent = enabled && nextAt ? formatTime(nextAt) : '-';
-  tickRemaining();
+  $refreshCount.textContent = `${refreshCount.toLocaleString('ko-KR')}회`;
+  tick();
 }
 
 async function checkPermission() {
@@ -104,7 +140,14 @@ $refreshNow.addEventListener('click', async () => {
 });
 
 api.storage.onChanged.addListener(render);
-setInterval(tickRemaining, 500);
+
+// 벽시계 초가 바뀌는 순간에 맞춰 갱신 (약간의 여유를 둬서 경계 직후에 실행)
+(function scheduleTick() {
+  setTimeout(() => {
+    tick();
+    scheduleTick();
+  }, 1000 - (Date.now() % 1000) + 20);
+})();
 
 (async () => {
   await render();
