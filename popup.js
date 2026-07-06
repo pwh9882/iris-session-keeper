@@ -3,6 +3,7 @@ const api = globalThis.browser ?? globalThis.chrome;
 const IRIS_ORIGINS = ['https://*.iris.go.kr/*'];
 
 const $status = document.getElementById('status');
+const $server = document.getElementById('server');
 const $remaining = document.getElementById('remaining');
 const $lastRun = document.getElementById('last-run');
 const $nextRun = document.getElementById('next-run');
@@ -68,13 +69,23 @@ function tick() {
 }
 
 async function render() {
-  const stored = await api.storage.local.get(['enabled', 'nextAt', 'lastRun', 'session', 'refreshCount']);
-  const { enabled = true, lastRun = null, refreshCount = 0 } = stored;
+  const stored = await api.storage.local.get(['enabled', 'nextAt', 'lastRun', 'session', 'refreshCount', 'server']);
+  const { enabled = true, lastRun = null, refreshCount = 0, server = null } = stored;
   session = stored.session ?? null;
   nextAt = enabled ? stored.nextAt ?? null : null;
 
   $status.textContent = enabled ? '동작 중' : '중지됨';
   $status.className = `value ${enabled ? 'ok' : 'err'}`;
+
+  if (server) {
+    $server.textContent = server.alive ? '정상' : '만료 — 재로그인 필요';
+    $server.className = `value ${server.alive ? 'ok' : 'err'}`;
+    $server.title = `마지막 확인 ${formatTime(server.at)}`;
+  } else {
+    $server.textContent = '-';
+    $server.className = 'value';
+    $server.title = '';
+  }
 
   $toggle.textContent = enabled ? '끄기' : '켜기';
   $toggle.className = enabled ? 'on' : 'off';
@@ -84,6 +95,10 @@ async function render() {
       $lastRun.textContent = formatTime(lastRun.at);
       $lastRun.className = 'value ok';
       $lastRun.title = lastRun.detail ?? '';
+    } else if (lastRun.expired) {
+      $lastRun.textContent = `세션 만료 (${formatTime(lastRun.at)})`;
+      $lastRun.className = 'value err';
+      $lastRun.title = 'IRIS에 다시 로그인하면 자동으로 유지가 재개됩니다';
     } else if (lastRun.offline) {
       $lastRun.textContent = `오프라인 (${formatTime(lastRun.at)})`;
       $lastRun.className = 'value warn';

@@ -3,6 +3,9 @@ const api = globalThis.browser ?? globalThis.chrome;
 
 const ALARM_NAME = 'iris-refresh';
 const IRIS_URL_PATTERN = 'https://*.iris.go.kr/*';
+// 인증 상태 오라클 겸 서버 세션 keep-alive. CSRF 토큰 없이 동작하며
+// 로그인 중이면 gdsSSOChk === 'Y', 세션이 죽었으면 'NOT_TOKEN'을 반환
+const SSO_CHECK_URL = 'https://www.iris.go.kr/lgin/lginadmn/ssoChk.do';
 const MIN_MINUTES = 5;
 const MAX_MINUTES = 10;
 const SAFETY_MARGIN_MINUTES = 2; // 세션 만료 전 최소한 이만큼 남기고 갱신
@@ -16,6 +19,10 @@ function pageClickRefresh() {
   // 오류 팝업을 띄우므로, 클릭하지 않고 건너뜀
   if (!navigator.onLine) {
     return { ok: false, offline: true, error: '오프라인 상태' };
+  }
+  // 홈페이지(index.do 등) 탭에는 nexacro가 없음 — 실패가 아니라 클릭 대상이 아닌 것
+  if (typeof nexacro === 'undefined') {
+    return { ok: false, na: true, error: 'nexacro 없음 (업무포털 탭 아님)' };
   }
   try {
     var f = nexacro.getApplication().mainframe.baseFrame.form.divTop.form;
@@ -77,7 +84,10 @@ async function updateBadge() {
   let text = 'ON';
   let color = '#2e7d32';
   if (lastRun && !lastRun.ok) {
-    if (lastRun.offline) {
+    if (lastRun.expired) {
+      text = 'EXP';
+      color = '#6a1b9a';
+    } else if (lastRun.offline) {
       text = 'NET';
       color = '#ef6c00';
     } else {
@@ -136,6 +146,45 @@ async function readSession() {
   }
 }
 
+// 서버 세션 keep-alive 핑 겸 생사 확인. IRIS 탭이 없어도 host 권한만 있으면
+// 쿠키가 실려 서버 idle timeout(2시간)이 리셋됨
+async function pingServer() {
+  try {
+    const res = await fetch(SSO_CHECK_URL, {
+      method: 'POST',
+      credentials: 'include',
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) return { alive: null, error: `HTTP ${res.status}` };
+    const data = await res.json().catch(() => null);
+    if (!data || data.gdsSSOChk === undefined) return { alive: null, error: '응답 형식을 인식할 수 없음' };
+    return { alive: data.gdsSSOChk === 'Y', code: data.gdsSSOChk };
+  } catch (e) {
+    return { alive: null, error: String(e) };
+  }
+}
+
+async function notifyExpired() {
+  try {
+    await api.notifications?.create('iris-session-expired', {
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: 'IRIS 세션 만료',
+      message: 'IRIS 서버 세션이 만료되었습니다. 다시 로그인해 주세요.',
+    });
+  } catch {
+    // 알림이 불가능한 환경이면 배지(EXP)로만 표시
+  }
+}
+
+// 서버 세션 상태를 저장하고, 살아있음→만료 전환 시에만 한 번 알림
+async function markServerState(alive) {
+  const { serverAlive = null } = await api.storage.local.get('serverAlive');
+  await api.storage.local.set({ server: { alive, at: Date.now() }, serverAlive: alive });
+  if (serverAlive === true && alive === false) await notifyExpired();
+}
+
 async function runRefresh() {
   // 백그라운드에서 먼저 오프라인이면 페이지를 건드리지 않고 건너뜀
   if (!navigator.onLine) {
@@ -145,15 +194,25 @@ async function runRefresh() {
     return result;
   }
 
-  const tabs = await api.tabs.query({ url: IRIS_URL_PATTERN });
-  if (tabs.length === 0) {
-    const result = { ok: false, error: 'IRIS 탭이 열려 있지 않음' };
-    await api.storage.local.set({ lastRun: { at: Date.now(), ...result } });
+  // 1) 서버 세션 핑: 탭 유무와 무관하게 idle timeout을 리셋하고 생사를 판정
+  const ping = await pingServer();
+  if (ping.alive !== null) await markServerState(ping.alive);
+
+  if (ping.alive === false) {
+    // 서버 세션이 죽었으면 클릭해봐야 소용없음 — 재로그인 전까지는 만료 상태로 보고
+    // (알람은 계속 돌아서 재로그인하면 자동으로 정상 상태로 복귀)
+    const result = { ok: false, expired: true, error: '서버 세션 만료 — 다시 로그인해 주세요' };
+    await api.storage.local.set({ lastRun: { at: Date.now(), ...result }, session: null });
     await updateBadge();
     return result;
   }
 
+  // 2) 업무포털 탭의 30분 클라이언트 타이머는 서버 핑으로 리셋되지 않으므로,
+  //    열려 있는 탭에서는 여전히 연장 버튼을 클릭해야 함
+  const tabs = await api.tabs.query({ url: IRIS_URL_PATTERN });
+
   let verified = 0;
+  let applicable = 0; // nexacro가 있는(=클릭 대상인) 탭 수
   let lastError = null;
   let sawOffline = false;
 
@@ -161,10 +220,13 @@ async function runRefresh() {
     try {
       const click = await execInTab(tab.id, pageClickRefresh);
       if (!click.ok) {
+        if (click.na) continue; // 홈페이지 등 nexacro 없는 탭은 실패로 치지 않음
+        applicable++;
         lastError = click.error;
         if (click.offline) sawOffline = true;
         continue;
       }
+      applicable++;
 
       // 클릭만으로 성공 판정하지 않고 sessionStartTime 리셋까지 확인
       await sleep(VERIFY_DELAY_MS);
@@ -188,12 +250,20 @@ async function runRefresh() {
     }
   }
 
-  const result =
-    verified > 0
-      ? { ok: true, detail: `탭 ${tabs.length}개 중 ${verified}개 갱신 확인` }
-      : { ok: false, error: lastError ?? '알 수 없는 오류', ...(sawOffline && { offline: true }) };
+  let result;
+  if (verified > 0) {
+    result = { ok: true, detail: `업무포털 탭 ${applicable}개 중 ${verified}개 갱신 확인` };
+  } else if (applicable === 0) {
+    // 클릭할 업무포털 탭이 없음 — 서버 핑이 성공했으면 세션은 유지되고 있는 것
+    result =
+      ping.alive === true
+        ? { ok: true, pingOnly: true, detail: '업무포털 탭 없음 — 서버 핑으로 세션 유지' }
+        : { ok: false, error: ping.error ?? 'IRIS 탭이 없고 서버 핑도 실패' };
+  } else {
+    result = { ok: false, error: lastError ?? '알 수 없는 오류', ...(sawOffline && { offline: true }) };
+  }
 
-  if (result.ok) {
+  if (result.ok && !result.pingOnly) {
     const { refreshCount = 0 } = await api.storage.local.get('refreshCount');
     await api.storage.local.set({ refreshCount: refreshCount + 1 });
   }
