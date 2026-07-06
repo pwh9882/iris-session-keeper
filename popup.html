@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    body {
+      width: 260px;
+      margin: 0;
+      padding: 16px;
+      font-family: -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+      font-size: 13px;
+      color: #212121;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 15px;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .label { color: #757575; }
+    .value { font-weight: 600; }
+    .value.ok { color: #2e7d32; }
+    .value.warn { color: #ef6c00; }
+    .value.err { color: #c62828; }
+    button {
+      width: 100%;
+      padding: 8px 0;
+      margin-top: 4px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #toggle.on { background: #2e7d32; color: #fff; }
+    #toggle.off { background: #e0e0e0; color: #424242; }
+    #refresh-now {
+      background: #fff;
+      border: 1px solid #bdbdbd;
+      color: #424242;
+      margin-top: 8px;
+    }
+    #refresh-now:active { background: #f5f5f5; }
+    #perm-box {
+      display: none;
+      margin-bottom: 12px;
+      padding: 10px;
+      background: #fff3e0;
+      border: 1px solid #ffb74d;
+      border-radius: 6px;
+      color: #e65100;
+      font-size: 12px;
+    }
+    #perm-box.visible { display: block; }
+    #grant {
+      background: #ef6c00;
+      color: #fff;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h1>IRIS Session Keeper</h1>
+  <div id="perm-box">
+    iris.go.kr 접근 권한이 필요합니다.
+    <button id="grant">권한 허용</button>
+  </div>
+  <div class="row">
+    <span class="label">상태</span>
+    <span class="value" id="status">-</span>
+  </div>
+  <div class="row">
+    <span class="label">남은 세션</span>
+    <span class="value" id="remaining">-</span>
+  </div>
+  <div class="row">
+    <span class="label">마지막 갱신</span>
+    <span class="value" id="last-run">-</span>
+  </div>
+  <div class="row">
+    <span class="label">다음 갱신</span>
+    <span class="value" id="next-run">-</span>
+  </div>
+  <button id="toggle" class="on">-</button>
+  <button id="refresh-now">지금 갱신</button>
+  <script src="popup.js"></script>
+</body>
+</html>

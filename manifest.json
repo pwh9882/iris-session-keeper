@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "IRIS Session Keeper",
+  "version": "1.1.0",
+  "description": "IRIS(iris.go.kr) 세션이 만료되지 않도록 5~10분 간격으로 자동 갱신합니다.",
+  "permissions": ["alarms", "scripting", "storage"],
+  "host_permissions": ["https://*.iris.go.kr/*"],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "IRIS Session Keeper"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "iris-session-keeper@pwh9882",
+      "strict_min_version": "128.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
+  }
+}
