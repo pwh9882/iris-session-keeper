@@ -204,6 +204,17 @@ async function updateKeptAliveAnchor(alive) {
   }
 }
 
+// 서버 핑만 돌려 서버 세션 상태와 살린 시간 기준점을 즉시 맞춤(포털 클릭 없음).
+// 팝업을 열 때 호출해, 알람을 기다리지 않고도 상태·카운터가 바로 최신이 되게 함
+async function syncServerStatus() {
+  if (!navigator.onLine) return;
+  const ping = await pingServer();
+  if (ping.alive !== null) {
+    await markServerState(ping.alive);
+    await updateKeptAliveAnchor(ping.alive);
+  }
+}
+
 async function runRefresh() {
   // 백그라운드에서 먼저 오프라인이면 페이지를 건드리지 않고 건너뜀
   if (!navigator.onLine) {
@@ -354,6 +365,8 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
         break;
       }
       case 'read-session': {
+        // 팝업 열림: 서버 핑으로 상태·카운터 기준점을 먼저 맞추고 포털 타이머를 읽음
+        await syncServerStatus();
         sendResponse(await readSession());
         break;
       }
