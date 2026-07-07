@@ -8,6 +8,7 @@ const $remaining = document.getElementById('remaining');
 const $lastRun = document.getElementById('last-run');
 const $nextRun = document.getElementById('next-run');
 const $refreshCount = document.getElementById('refresh-count');
+const $keptAlive = document.getElementById('kept-alive');
 const $toggle = document.getElementById('toggle');
 const $refreshNow = document.getElementById('refresh-now');
 const $permBox = document.getElementById('perm-box');
@@ -28,6 +29,18 @@ function formatSeconds(totalSec) {
   const m = Math.floor(totalSec / 60);
   const s = String(totalSec % 60).padStart(2, '0');
   return `${m}분 ${s}초`;
+}
+
+// 누적 유지 시간(ms)을 사람이 읽기 좋은 큰 단위 2개로 요약
+function formatDuration(ms) {
+  const totalMin = Math.floor(ms / 60_000);
+  if (totalMin < 1) return '0분';
+  const d = Math.floor(totalMin / 1440);
+  const h = Math.floor((totalMin % 1440) / 60);
+  const m = totalMin % 60;
+  if (d > 0) return h > 0 ? `${d}일 ${h}시간` : `${d}일`;
+  if (h > 0) return m > 0 ? `${h}시간 ${m}분` : `${h}시간`;
+  return `${m}분`;
 }
 
 // 초 단위 계산을 벽시계 초 경계에 맞춰서 두 카운트다운이 같은 순간에 줄어들게 함
@@ -69,8 +82,8 @@ function tick() {
 }
 
 async function render() {
-  const stored = await api.storage.local.get(['enabled', 'nextAt', 'lastRun', 'session', 'refreshCount', 'server']);
-  const { enabled = true, lastRun = null, refreshCount = 0, server = null } = stored;
+  const stored = await api.storage.local.get(['enabled', 'nextAt', 'lastRun', 'session', 'refreshCount', 'server', 'keptAliveMs']);
+  const { enabled = true, lastRun = null, refreshCount = 0, server = null, keptAliveMs = 0 } = stored;
   session = stored.session ?? null;
   nextAt = enabled ? stored.nextAt ?? null : null;
 
@@ -115,6 +128,7 @@ async function render() {
   }
 
   $refreshCount.textContent = `${refreshCount.toLocaleString('ko-KR')}회`;
+  $keptAlive.textContent = formatDuration(keptAliveMs);
   tick();
 }
 

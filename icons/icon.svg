@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- IRIS Session Keeper icon -->
+  <!-- brand colors sampled from logo: navy #121A4C, blue #1F40AA, pink #EF4B81 -->
+  <rect x="0" y="0" width="128" height="128" rx="28" fill="#121A4C"/>
+
+  <!-- refresh arc (session keep-alive) -->
+  <path d="M 106.5 52.6 A 44 44 0 1 1 75.4 21.5"
+        fill="none" stroke="#4C6FE8" stroke-width="10" stroke-linecap="round"/>
+  <!-- arrowhead -->
+  <path d="M 88.9 25.1 L 70.9 30.7 L 76.1 11.3 Z"
+        fill="#4C6FE8" stroke="#4C6FE8" stroke-width="4" stroke-linejoin="round"/>
+
+  <!-- lowercase i from the iris wordmark -->
+  <rect x="58" y="56" width="12" height="40" rx="6" fill="#FFFFFF"/>
+  <circle cx="64" cy="41" r="9" fill="#EF4B81"/>
+</svg>

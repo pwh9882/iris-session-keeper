@@ -14,6 +14,7 @@
     h1 {
       margin: 0 0 12px;
       font-size: 15px;
+      color: #121A4C;
     }
     .row {
       display: flex;
@@ -23,9 +24,10 @@
     }
     .label { color: #757575; }
     .value { font-weight: 600; }
-    .value.ok { color: #2e7d32; }
+    .value.ok { color: #1F40AA; }
     .value.warn { color: #ef6c00; }
     .value.err { color: #c62828; }
+    .value.accent { color: #EF4B81; }
     button {
       width: 100%;
       padding: 8px 0;
@@ -36,7 +38,7 @@
       font-weight: 600;
       cursor: pointer;
     }
-    #toggle.on { background: #2e7d32; color: #fff; }
+    #toggle.on { background: #1F40AA; color: #fff; }
     #toggle.off { background: #e0e0e0; color: #424242; }
     #refresh-now {
       background: #fff;
@@ -60,6 +62,11 @@
       background: #ef6c00;
       color: #fff;
       margin-top: 8px;
+    }
+    .divider {
+      height: 1px;
+      background: #eceef4;
+      margin: 4px 0 10px;
     }
   </style>
 </head>
@@ -92,6 +99,11 @@
   <div class="row">
     <span class="label">연장 횟수</span>
     <span class="value" id="refresh-count">-</span>
+  </div>
+  <div class="divider"></div>
+  <div class="row">
+    <span class="label">살린 시간</span>
+    <span class="value accent" id="kept-alive">-</span>
   </div>
   <button id="toggle" class="on">-</button>
   <button id="refresh-now">지금 갱신</button>

@@ -9,6 +9,9 @@ const SSO_CHECK_URL = 'https://www.iris.go.kr/lgin/lginadmn/ssoChk.do';
 const MIN_MINUTES = 5;
 const MAX_MINUTES = 10;
 const SAFETY_MARGIN_MINUTES = 2; // 세션 만료 전 최소한 이만큼 남기고 갱신
+// "살린 시간" 누적 시 연속으로 인정하는 최대 공백. 알람 최대 간격(10분)에
+// 한 번의 실패/스킵을 더 허용하는 여유. 이보다 길면(예: 절전) 그 공백은 안 셈
+const KEEP_ALIVE_CONTINUITY_MS = 25 * 60_000;
 const OFFLINE_RETRY_MINUTES = 1; // 오프라인이면 짧게 재시도해 연결 복구 직후 갱신
 const VERIFY_DELAY_MS = 2000; // 클릭 후 서버 응답으로 sessionStartTime이 리셋될 때까지 대기
 const RESET_TOLERANCE_MS = 15_000; // startTime이 이 안쪽이면 방금 리셋된 것으로 판정
@@ -82,11 +85,11 @@ async function updateBadge() {
     return;
   }
   let text = 'ON';
-  let color = '#2e7d32';
+  let color = '#4C6FE8'; // 아이콘 배경(네이비) 위에서 잘 보이는 브랜드 블루
   if (lastRun && !lastRun.ok) {
     if (lastRun.expired) {
       text = 'EXP';
-      color = '#6a1b9a';
+      color = '#EF4B81'; // 브랜드 핑크 — 주의(재로그인 필요)
     } else if (lastRun.offline) {
       text = 'NET';
       color = '#ef6c00';
@@ -185,6 +188,20 @@ async function markServerState(alive) {
   if (serverAlive === true && alive === false) await notifyExpired();
 }
 
+// 세션이 살아있음이 확인될 때마다, 직전 확인 이후 경과분을 "살린 시간"에 누적.
+// 공백이 KEEP_ALIVE_CONTINUITY_MS를 넘거나 세션이 끊기면 연속성을 리셋해
+// (절전·확장 off·만료 등) 실제로 유지하지 못한 구간은 세지 않음
+async function accumulateKeptAlive(alive) {
+  const now = Date.now();
+  const { keptAliveMs = 0, lastAliveAt = null } = await api.storage.local.get(['keptAliveMs', 'lastAliveAt']);
+  if (alive) {
+    const add = lastAliveAt && now - lastAliveAt <= KEEP_ALIVE_CONTINUITY_MS ? now - lastAliveAt : 0;
+    await api.storage.local.set({ keptAliveMs: keptAliveMs + add, lastAliveAt: now });
+  } else {
+    await api.storage.local.set({ lastAliveAt: null });
+  }
+}
+
 async function runRefresh() {
   // 백그라운드에서 먼저 오프라인이면 페이지를 건드리지 않고 건너뜀
   if (!navigator.onLine) {
@@ -197,6 +214,7 @@ async function runRefresh() {
   // 1) 서버 세션 핑: 탭 유무와 무관하게 idle timeout을 리셋하고 생사를 판정
   const ping = await pingServer();
   if (ping.alive !== null) await markServerState(ping.alive);
+  await accumulateKeptAlive(ping.alive === true);
 
   if (ping.alive === false) {
     // 서버 세션이 죽었으면 클릭해봐야 소용없음 — 재로그인 전까지는 만료 상태로 보고
