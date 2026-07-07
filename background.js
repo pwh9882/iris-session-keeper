@@ -9,9 +9,6 @@ const SSO_CHECK_URL = 'https://www.iris.go.kr/lgin/lginadmn/ssoChk.do';
 const MIN_MINUTES = 5;
 const MAX_MINUTES = 10;
 const SAFETY_MARGIN_MINUTES = 2; // 세션 만료 전 최소한 이만큼 남기고 갱신
-// "살린 시간" 누적 시 연속으로 인정하는 최대 공백. 알람 최대 간격(10분)에
-// 한 번의 실패/스킵을 더 허용하는 여유. 이보다 길면(예: 절전) 그 공백은 안 셈
-const KEEP_ALIVE_CONTINUITY_MS = 25 * 60_000;
 const OFFLINE_RETRY_MINUTES = 1; // 오프라인이면 짧게 재시도해 연결 복구 직후 갱신
 const VERIFY_DELAY_MS = 2000; // 클릭 후 서버 응답으로 sessionStartTime이 리셋될 때까지 대기
 const RESET_TOLERANCE_MS = 15_000; // startTime이 이 안쪽이면 방금 리셋된 것으로 판정
@@ -131,22 +128,29 @@ async function cancelSchedule() {
   await api.storage.local.set({ nextAt: null });
 }
 
-// 열려 있는 IRIS 탭에서 세션 정보만 읽어옴 (팝업의 남은 시간 표시용)
+// 열려 있는 IRIS 탭에서 세션 정보만 읽어옴 (팝업의 남은 시간 표시용).
+// 첫 탭이 홈페이지(nexacro 없음)일 수 있으므로 읽힐 때까지 전체 탭을 순회
 async function readSession() {
   const tabs = await api.tabs.query({ url: IRIS_URL_PATTERN });
-  if (tabs.length === 0) return { ok: false, error: 'IRIS 탭이 열려 있지 않음' };
 
-  try {
-    const info = await execInTab(tabs[0].id, pageReadSession);
-    if (isSaneSession(info)) {
-      await api.storage.local.set({
-        session: { duration: info.duration, startTime: info.startTime },
-      });
+  let lastError = 'IRIS 탭이 열려 있지 않음';
+  for (const tab of tabs) {
+    try {
+      const info = await execInTab(tab.id, pageReadSession);
+      if (isSaneSession(info)) {
+        await api.storage.local.set({
+          session: { duration: info.duration, startTime: info.startTime },
+        });
+        return info;
+      }
+      if (!info.ok) lastError = info.error;
+    } catch (e) {
+      lastError = String(e);
     }
-    return info;
-  } catch (e) {
-    return { ok: false, error: String(e) };
   }
+  // 못 읽었으면 저장된 값도 비움 — 닫힌 탭의 옛 세션으로 카운트다운하는 것 방지
+  await api.storage.local.set({ session: null });
+  return { ok: false, error: lastError };
 }
 
 // 서버 세션 keep-alive 핑 겸 생사 확인. IRIS 탭이 없어도 host 권한만 있으면
@@ -188,17 +192,15 @@ async function markServerState(alive) {
   if (serverAlive === true && alive === false) await notifyExpired();
 }
 
-// 세션이 살아있음이 확인될 때마다, 직전 확인 이후 경과분을 "살린 시간"에 누적.
-// 공백이 KEEP_ALIVE_CONTINUITY_MS를 넘거나 세션이 끊기면 연속성을 리셋해
-// (절전·확장 off·만료 등) 실제로 유지하지 못한 구간은 세지 않음
-async function accumulateKeptAlive(alive) {
-  const now = Date.now();
-  const { keptAliveMs = 0, lastAliveAt = null } = await api.storage.local.get(['keptAliveMs', 'lastAliveAt']);
-  if (alive) {
-    const add = lastAliveAt && now - lastAliveAt <= KEEP_ALIVE_CONTINUITY_MS ? now - lastAliveAt : 0;
-    await api.storage.local.set({ keptAliveMs: keptAliveMs + add, lastAliveAt: now });
-  } else {
-    await api.storage.local.set({ lastAliveAt: null });
+// "살린 시간" 카운터의 기준점. 세션이 살아있음을 처음 확인한 시점을 기록하고
+// 팝업이 (지금 - 기준점)을 실시간 카운터로 표시. 세션이 만료되면 리셋되며,
+// 확장을 끄거나 브라우저를 재시작할 때도 리셋됨
+async function updateKeptAliveAnchor(alive) {
+  const { keptAliveSince = null } = await api.storage.local.get('keptAliveSince');
+  if (alive && keptAliveSince === null) {
+    await api.storage.local.set({ keptAliveSince: Date.now() });
+  } else if (!alive && keptAliveSince !== null) {
+    await api.storage.local.set({ keptAliveSince: null });
   }
 }
 
@@ -212,9 +214,12 @@ async function runRefresh() {
   }
 
   // 1) 서버 세션 핑: 탭 유무와 무관하게 idle timeout을 리셋하고 생사를 판정
+  // (핑이 불확실(null)하면 카운터는 건드리지 않음 — 일시적 네트워크 오류로 리셋 방지)
   const ping = await pingServer();
-  if (ping.alive !== null) await markServerState(ping.alive);
-  await accumulateKeptAlive(ping.alive === true);
+  if (ping.alive !== null) {
+    await markServerState(ping.alive);
+    await updateKeptAliveAnchor(ping.alive);
+  }
 
   if (ping.alive === false) {
     // 서버 세션이 죽었으면 클릭해봐야 소용없음 — 재로그인 전까지는 만료 상태로 보고
@@ -307,15 +312,23 @@ globalThis.addEventListener?.('online', async () => {
   await scheduleNext();
 });
 
-api.runtime.onInstalled.addListener(async () => {
+// 설치/시작/켜기 직후 알람을 기다리지 않고 즉시 1회 실행해
+// 팝업 상태(서버 세션 등)가 바로 채워지고 살린 시간 카운터도 바로 시작되게 함
+async function startFresh() {
+  await api.storage.local.set({ keptAliveSince: null });
   await updateBadge();
-  if (await isEnabled()) await scheduleNext();
+  if (await isEnabled()) {
+    await runRefresh();
+    await scheduleNext();
+  }
+}
+
+api.runtime.onInstalled.addListener(async () => {
+  await api.storage.local.remove(['keptAliveMs', 'lastAliveAt']); // 구버전 누적 통계 키 정리
+  await startFresh();
 });
 
-api.runtime.onStartup.addListener(async () => {
-  await updateBadge();
-  if (await isEnabled()) await scheduleNext();
-});
+api.runtime.onStartup.addListener(startFresh);
 
 api.runtime.onMessage.addListener((message, sender, sendResponse) => {
   (async () => {
@@ -324,9 +337,11 @@ api.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const enabled = !(await isEnabled());
         await api.storage.local.set({ enabled });
         if (enabled) {
+          await runRefresh(); // 켜자마자 즉시 확인 — 살린 시간 카운터도 여기서 시작
           await scheduleNext();
         } else {
           await cancelSchedule();
+          await api.storage.local.set({ keptAliveSince: null }); // 끄면 카운터 리셋
         }
         await updateBadge();
         sendResponse({ enabled });

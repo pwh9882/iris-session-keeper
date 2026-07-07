@@ -16,6 +16,8 @@ const $grant = document.getElementById('grant');
 
 let session = null;
 let nextAt = null; // 다음 자동갱신 시각 (비활성화 상태면 null)
+let keptAliveSince = null; // 살린 시간 카운터 기준점 (세션 유지 확인 시작 시각)
+let sessionNote = null; // 남은 세션을 읽지 못한 이유 (업무포털 탭 없음 등)
 
 function formatTime(ts) {
   return new Date(ts).toLocaleTimeString('ko-KR', {
@@ -31,16 +33,15 @@ function formatSeconds(totalSec) {
   return `${m}분 ${s}초`;
 }
 
-// 누적 유지 시간(ms)을 사람이 읽기 좋은 큰 단위 2개로 요약
+// 유지 시간(ms)을 실시간 카운터용으로 포맷 — 1시간 미만은 초 단위로 움직임
 function formatDuration(ms) {
-  const totalMin = Math.floor(ms / 60_000);
-  if (totalMin < 1) return '0분';
-  const d = Math.floor(totalMin / 1440);
-  const h = Math.floor((totalMin % 1440) / 60);
-  const m = totalMin % 60;
-  if (d > 0) return h > 0 ? `${d}일 ${h}시간` : `${d}일`;
-  if (h > 0) return m > 0 ? `${h}시간 ${m}분` : `${h}시간`;
-  return `${m}분`;
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  if (totalSec < 3600) return formatSeconds(totalSec);
+  const d = Math.floor(totalSec / 86400);
+  const h = Math.floor((totalSec % 86400) / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  if (d > 0) return `${d}일 ${h}시간`;
+  return `${h}시간 ${m}분`;
 }
 
 // 초 단위 계산을 벽시계 초 경계에 맞춰서 두 카운트다운이 같은 순간에 줄어들게 함
@@ -50,7 +51,7 @@ function secondsUntil(deadline, now) {
 
 function tickRemaining(now) {
   if (!session) {
-    $remaining.textContent = '-';
+    $remaining.textContent = sessionNote ?? '-';
     $remaining.className = 'value';
     return;
   }
@@ -75,17 +76,29 @@ function tickNextRun(now) {
   $nextRun.title = formatTime(nextAt);
 }
 
+function tickKeptAlive(now) {
+  if (!keptAliveSince) {
+    $keptAlive.textContent = '-';
+    $keptAlive.title = '';
+    return;
+  }
+  $keptAlive.textContent = formatDuration(now - keptAliveSince);
+  $keptAlive.title = `${formatTime(keptAliveSince)}부터 유지 중`;
+}
+
 function tick() {
   const now = Date.now();
   tickRemaining(now);
   tickNextRun(now);
+  tickKeptAlive(now);
 }
 
 async function render() {
-  const stored = await api.storage.local.get(['enabled', 'nextAt', 'lastRun', 'session', 'refreshCount', 'server', 'keptAliveMs']);
-  const { enabled = true, lastRun = null, refreshCount = 0, server = null, keptAliveMs = 0 } = stored;
+  const stored = await api.storage.local.get(['enabled', 'nextAt', 'lastRun', 'session', 'refreshCount', 'server', 'keptAliveSince']);
+  const { enabled = true, lastRun = null, refreshCount = 0, server = null } = stored;
   session = stored.session ?? null;
   nextAt = enabled ? stored.nextAt ?? null : null;
+  keptAliveSince = stored.keptAliveSince ?? null;
 
   $status.textContent = enabled ? '동작 중' : '중지됨';
   $status.className = `value ${enabled ? 'ok' : 'err'}`;
@@ -128,7 +141,6 @@ async function render() {
   }
 
   $refreshCount.textContent = `${refreshCount.toLocaleString('ko-KR')}회`;
-  $keptAlive.textContent = formatDuration(keptAliveMs);
   tick();
 }
 
@@ -141,7 +153,10 @@ async function checkPermission() {
 
 async function requestFreshSession() {
   try {
-    await api.runtime.sendMessage({ type: 'read-session' });
+    const res = await api.runtime.sendMessage({ type: 'read-session' });
+    // 세션을 못 읽었으면 그 이유를 남은 세션 자리에 표시 (예: 업무포털 탭 없음)
+    sessionNote = res && !res.ok ? '업무포털 탭 없음' : null;
+    if (res && !res.ok) $remaining.title = res.error ?? '';
     await render();
   } catch {
     // 백그라운드가 응답하지 않아도 저장된 값으로 표시
