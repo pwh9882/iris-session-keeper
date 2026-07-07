@@ -154,8 +154,9 @@ async function checkPermission() {
 async function requestFreshSession() {
   try {
     const res = await api.runtime.sendMessage({ type: 'read-session' });
-    // 세션을 못 읽었으면 그 이유를 남은 세션 자리에 표시 (예: 업무포털 탭 없음)
-    sessionNote = res && !res.ok ? '업무포털 탭 없음' : null;
+    // 타이머를 못 읽었으면 그 이유를 포털 타이머 자리에 표시.
+    // 참고: 로그아웃 상태에서는 포털 주소를 열어도 홈페이지로 리다이렉트되므로 탭 없음이 맞음
+    sessionNote = res && !res.ok ? '포털 탭 없음' : null;
     if (res && !res.ok) $remaining.title = res.error ?? '';
     await render();
   } catch {

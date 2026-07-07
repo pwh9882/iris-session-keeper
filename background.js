@@ -4,7 +4,7 @@ const api = globalThis.browser ?? globalThis.chrome;
 const ALARM_NAME = 'iris-refresh';
 const IRIS_URL_PATTERN = 'https://*.iris.go.kr/*';
 // 인증 상태 오라클 겸 서버 세션 keep-alive. CSRF 토큰 없이 동작하며
-// 로그인 중이면 gdsSSOChk === 'Y', 세션이 죽었으면 'NOT_TOKEN'을 반환
+// 로그인 중이면 gdsSSOChk === 'Y', 아니면 'N'(로그아웃)이나 'NOT_TOKEN'(만료) 등
 const SSO_CHECK_URL = 'https://www.iris.go.kr/lgin/lginadmn/ssoChk.do';
 const MIN_MINUTES = 5;
 const MAX_MINUTES = 10;
